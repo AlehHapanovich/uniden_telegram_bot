@@ -205,6 +205,17 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆕 Firmware: {state[d]['firmware']}\n"
         f"📡 GPS: {state[d]['gps']}"
     )
+    
+async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users = load_users()
+    state = load_state()
+
+    await update.message.reply_text(
+        "📁 USERS.JSON:\n"
+        f"{json.dumps(users, indent=2)}\n\n"
+        "📁 STATE.JSON:\n"
+        f"{json.dumps(state, indent=2)}"
+    )
 
 
 # ================= BUTTON CALLBACK =================
@@ -297,6 +308,7 @@ def main():
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.add_handler(CommandHandler("debug", debug))
 
     app.job_queue.run_repeating(check_updates, interval=3600, first=10)
 
