@@ -59,52 +59,48 @@ def get_versions(url, device):
         r = requests.get(url, timeout=15)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        tables = soup.find_all("table")
+        table = None
+        headers = None
 
-        target_table = None
-        version_idx = None
-        date_idx = None
+        # 1. находим таблицу
+        for t in soup.find_all("table"):
+            ths = [h.get_text(strip=True).lower() for h in t.find_all("th")]
 
-        # =========================
-        # 1. FIND RIGHT TABLE
-        # =========================
-        for table in tables:
-            headers = table.find_all("th")
-            header_texts = [h.get_text(strip=True).lower() for h in headers]
-
-            if not header_texts:
-                continue
-
-            # ищем нужные колонки
-            has_version = any("version" in h for h in header_texts)
-            has_date = any("release" in h or "date" in h for h in header_texts)
-
-            if has_version and has_date:
-                target_table = table
-
-                # определяем индексы колонок
-                for i, h in enumerate(header_texts):
-                    if "version" in h:
-                        version_idx = i
-                    if "release" in h or "date" in h:
-                        date_idx = i
+            if "release" in " ".join(ths) and "description" in " ".join(ths):
+                table = t
+                headers = ths
                 break
 
-        if not target_table:
+        if not table:
             return None, None
 
-        rows = target_table.find_all("tr")
+        # 2. индексы колонок
+        cols = table.find_all("th")
+        version_idx = None
+        desc_idx = None
+        date_idx = None
+
+        for i, h in enumerate(cols):
+            txt = h.get_text(strip=True).lower()
+
+            if "version" in txt:
+                version_idx = i
+            if "description" in txt:
+                desc_idx = i
+            if "release" in txt or "date" in txt:
+                date_idx = i
 
         items = []
 
-        for row in rows[1:]:  # skip header
-            cols = row.find_all(["td", "th"])
-
-            if len(cols) <= max(version_idx, date_idx):
+        # 3. читаем строки
+        for row in table.find_all("tr")[1:]:
+            tds = row.find_all("td")
+            if len(tds) <= max(version_idx, desc_idx, date_idx):
                 continue
 
-            version_text = cols[version_idx].get_text(strip=True)
-            date_text = cols[date_idx].get_text(strip=True)
+            version = tds[version_idx].get_text(strip=True)
+            desc = tds[desc_idx].get_text(strip=True)
+            date_text = tds[date_idx].get_text(strip=True)
 
             try:
                 date = datetime.strptime(date_text, "%m/%d/%Y")
@@ -112,45 +108,34 @@ def get_versions(url, device):
                 continue
 
             items.append({
-                "version": version_text,
+                "version": version,
+                "desc": desc,
                 "date": date
             })
 
-        if not items:
-            return None, None
-
-        # =========================
-        # SORT BY RELEASE DATE
-        # =========================
+        # 4. сортировка по Release Date
         items.sort(key=lambda x: x["date"], reverse=True)
 
         firmware = None
         gps = None
 
+        # 5. ИМЕННО Description используем для логики
         for item in items:
-            v = item["version"]
-            d = item["date"]
+            d = item["desc"].lower()
 
-            # ---------------- FIRMWARE ----------------
-            if "firmware" in v.lower() or "version" in v.lower():
-                match = re.search(r"\d+(\.\d+)+", v)
-                if match:
-                    firmware = f"Firmware {match.group()} ({d.strftime('%Y/%m/%d')})"
-                    break
+            if not firmware and "firmware" in d:
+                firmware = f"Firmware Update v{item['version']}"
 
-        for item in items:
-            v = item["version"]
-            d = item["date"]
+            if not gps and ("gps" in d or "database" in d):
+                gps = f"Database Update {item['version']}"
 
-            # ---------------- GPS ----------------
-            if "gps" in v.lower() or "database" in v.lower():
-                gps = f"{v} ({d.strftime('%Y/%m/%d')})"
+            if firmware and gps:
                 break
 
         return firmware, gps
 
     except Exception as e:
-        print("auto parser error:", e)
+        print("parse error:", e)
         return None, None
 
 
