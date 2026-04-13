@@ -1,6 +1,5 @@
 import os
 import json
-import asyncio
 import requests
 import re
 from datetime import datetime
@@ -14,6 +13,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
+# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 
 DEVICES = {
@@ -29,56 +29,31 @@ STATE_FILE = "state.json"
 # ================= STORAGE =================
 def load_users():
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
+        return json.load(open(USERS_FILE))
     return {}
 
 def save_users(data):
-    with open(USERS_FILE, "w") as f:
-        json.dump(data, f)
+    json.dump(data, open(USERS_FILE, "w"))
 
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
+        return json.load(open(STATE_FILE))
     return {d: {"firmware": None, "gps": None} for d in DEVICES}
 
 
 def save_state(data):
-    with open(STATE_FILE, "w") as f:
-        json.dump(data, f)
+    json.dump(data, open(STATE_FILE, "w"))
 
 
-# ================= HELPERS =================
-def extract_date(line):
-    match = re.search(r"\d{4}/\d{2}/\d{2}", line)
-    if match:
-        try:
-            return datetime.strptime(match.group(), "%Y/%m/%d")
-        except:
-            return None
-    return None
-
-
-def days_ago(date_string):
-    date = extract_date(date_string)
-    if not date:
+# ================= PARSER (Release Date-based) =================
+def parse_date(text):
+    match = re.search(r"\d{4}/\d{2}/\d{2}", text)
+    if not match:
         return None
-    return (datetime.now() - date).days
+    return datetime.strptime(match.group(), "%Y/%m/%d")
 
 
-def format_with_days(text):
-    if not text:
-        return "неизвестно"
-
-    days = days_ago(text)
-    if days is not None:
-        return f"{text} (обновлено {days} дн. назад)"
-    return text
-
-
-# ================= PARSER =================
 def get_versions(url, device):
     try:
         r = requests.get(url, timeout=15)
@@ -86,52 +61,46 @@ def get_versions(url, device):
 
         rows = soup.find_all("tr")
 
-        firmware_items = []
-        gps_items = []
+        firmware = []
+        gps = []
 
         for row in rows:
             cols = row.find_all("td")
-
             if len(cols) < 3:
                 continue
 
             name = cols[0].get_text(strip=True)
             date_text = cols[-1].get_text(strip=True)
 
-            # пробуем распарсить дату
-            try:
-                date = datetime.strptime(date_text, "%m/%d/%Y")
-            except:
+            date = parse_date(date_text)
+            if not date:
                 continue
 
-            # firmware
             if device in name and ("Firmware" in name or "Version" in name):
-                firmware_items.append((date, name))
+                firmware.append((date, name))
 
-            # gps
             if "Database" in name or "GPS" in name:
-                gps_items.append((date, name))
+                gps.append((date, name))
 
-        firmware = max(firmware_items, key=lambda x: x[0])[1] if firmware_items else None
-        gps = max(gps_items, key=lambda x: x[0])[1] if gps_items else None
+        firmware = max(firmware, key=lambda x: x[0])[1] if firmware else None
+        gps = max(gps, key=lambda x: x[0])[1] if gps else None
 
         return firmware, gps
 
     except Exception as e:
-        print("Parse error:", e)
+        print("parse error:", e)
         return None, None
 
 
 # ================= UI =================
-def device_keyboard():
+def keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("R3", callback_data="set_R3")],
         [InlineKeyboardButton("R7", callback_data="set_R7")],
         [InlineKeyboardButton("R8", callback_data="set_R8")],
     ])
 
-
-def change_keyboard():
+def change_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Сменить модель", callback_data="change")]
     ])
@@ -139,17 +108,11 @@ def change_keyboard():
 
 # ================= COMMANDS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🚗 Выбери свой радар:",
-        reply_markup=device_keyboard()
-    )
+    await update.message.reply_text("🚗 Выбери радар:", reply_markup=keyboard())
 
 
 async def change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔄 Выбери новую модель:",
-        reply_markup=device_keyboard()
-    )
+    await update.message.reply_text("🔄 Выбери модель:", reply_markup=keyboard())
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,129 +122,91 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
 
     if uid not in users:
-        await update.message.reply_text("❗ Сначала выбери модель через /start")
+        await update.message.reply_text("Сначала /start")
         return
 
-    device = users[uid]
-
-    firmware = format_with_days(state[device]["firmware"])
-    gps = format_with_days(state[device]["gps"])
+    d = users[uid]
+    fw = state[d]["firmware"] or "нет данных"
+    gps = state[d]["gps"] or "нет данных"
 
     await update.message.reply_text(
-        f"🚗 {device}\n"
-        f"🆕 Firmware: {firmware}\n"
-        f"📡 GPS: {gps}"
+        f"🚗 {d}\n🆕 {fw}\n📡 {gps}"
     )
 
 
 # ================= BUTTON =================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query
+    await q.answer()
 
     users = load_users()
-    uid = str(query.from_user.id)
+    uid = str(q.from_user.id)
 
-    if query.data == "change":
-        await query.message.reply_text(
-            "🔄 Выбери новую модель:",
-            reply_markup=device_keyboard()
-        )
+    if q.data == "change":
+        await q.message.reply_text("🔄 Выбери модель:", reply_markup=keyboard())
         return
 
-    if query.data.startswith("set_"):
-        device = query.data.split("_")[1]
+    if q.data.startswith("set_"):
+        device = q.data.split("_")[1]
         users[uid] = device
         save_users(users)
 
         state = load_state()
-        firmware = state[device]["firmware"]
-        gps = state[device]["gps"]
+        fw, gps = get_versions(DEVICES[device], device)
 
-        if not firmware or not gps:
-            f, g = get_versions(DEVICES[device], device)
-            if f:
-                firmware = f
-                state[device]["firmware"] = f
-            if g:
-                gps = g
-                state[device]["gps"] = g
-            save_state(state)
+        if fw:
+            state[device]["firmware"] = fw
+        if gps:
+            state[device]["gps"] = gps
 
-        firmware = format_with_days(firmware)
-        gps = format_with_days(gps)
+        save_state(state)
 
-        await query.edit_message_text(
-            f"✅ Вы выбрали: {device}\n\n"
-            f"🆕 Firmware: {firmware}\n"
-            f"📡 GPS: {gps}",
-            reply_markup=change_keyboard()
+        await q.edit_message_text(
+            f"✅ {device}\n🆕 {fw}\n📡 {gps}",
+            reply_markup=change_kb()
         )
 
 
-# ================= CHECKER =================
-async def checker(app):
-    while True:
-        users = load_users()
-        state = load_state()
-
-        for device, url in DEVICES.items():
-            firmware, gps = get_versions(url, device)
-
-            # firmware update
-            if firmware and firmware != state[device]["firmware"]:
-                for uid, dev in users.items():
-                    if dev == device:
-                        await app.bot.send_message(
-                            chat_id=uid,
-                            text=f"🆕 {device} прошивка:\n{firmware}"
-                        )
-                state[device]["firmware"] = firmware
-
-            # gps update
-            if gps and gps != state[device]["gps"]:
-                for uid, dev in users.items():
-                    if dev == device:
-                        await app.bot.send_message(
-                            chat_id=uid,
-                            text=f"📡 {device} GPS база:\n{gps}"
-                        )
-                state[device]["gps"] = gps
-
-        save_state(state)
-        await asyncio.sleep(3600)
-
-
-# ================= INIT =================
-def init_versions():
+# ================= SAFE CHECKER (JobQueue) =================
+async def check_updates(context: ContextTypes.DEFAULT_TYPE):
+    users = load_users()
     state = load_state()
 
     for device, url in DEVICES.items():
-        f, g = get_versions(url, device)
-        if f:
-            state[device]["firmware"] = f
-        if g:
-            state[device]["gps"] = g
+        fw, gps = get_versions(url, device)
+
+        if fw and fw != state[device]["firmware"]:
+            for uid, d in users.items():
+                if d == device:
+                    await context.bot.send_message(uid, f"🆕 {device}: {fw}")
+            state[device]["firmware"] = fw
+
+        if gps and gps != state[device]["gps"]:
+            for uid, d in users.items():
+                if d == device:
+                    await context.bot.send_message(uid, f"📡 {device}: {gps}")
+            state[device]["gps"] = gps
 
     save_state(state)
 
 
-# ================= MAIN =================
+# ================= MAIN (NEEDLE-ROBUST) =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("change", change))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CallbackQueryHandler(button))
 
-    init_versions()
+    # SAFE scheduler (NO asyncio chaos)
+    app.job_queue.run_repeating(check_updates, interval=3600, first=10)
 
-    loop = asyncio.get_event_loop()
-    loop.create_task(checker(app))
-
-    print("Bot started...")
-    app.run_polling()
+    print("BOT STARTED (stable mode)")
+    app.run_polling(
+        drop_pending_updates=True  # 🔥 убирает конфликты getUpdates
+    )
 
 
 if __name__ == "__main__":
