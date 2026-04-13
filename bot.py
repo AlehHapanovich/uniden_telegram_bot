@@ -2,6 +2,8 @@ import os
 import json
 import asyncio
 import requests
+import re
+from datetime import datetime
 from bs4 import BeautifulSoup
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -51,6 +53,33 @@ def load_state():
 def save_state(data):
     with open(STATE_FILE, "w") as f:
         json.dump(data, f)
+
+
+# =====================
+# HELPERS
+# =====================
+def days_ago(date_string):
+    try:
+        match = re.search(r"\d{4}/\d{2}/\d{2}", date_string)
+        if not match:
+            return None
+
+        date = datetime.strptime(match.group(), "%Y/%m/%d")
+        now = datetime.now()
+
+        return (now - date).days
+    except:
+        return None
+
+
+def format_with_days(text):
+    if not text:
+        return "неизвестно"
+
+    days = days_ago(text)
+    if days is not None:
+        return f"{text} (обновлено {days} дн. назад)"
+    return text
 
 
 # =====================
@@ -116,8 +145,30 @@ async def change(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    users = load_users()
+    state = load_state()
+
+    uid = str(update.effective_user.id)
+
+    if uid not in users:
+        await update.message.reply_text("❗ Сначала выбери модель через /start")
+        return
+
+    device = users[uid]
+
+    firmware = format_with_days(state[device]["firmware"])
+    gps = format_with_days(state[device]["gps"])
+
+    await update.message.reply_text(
+        f"🚗 {device}\n"
+        f"🆕 Firmware: {firmware}\n"
+        f"📡 GPS: {gps}"
+    )
+
+
 # =====================
-# CALLBACKS
+# BUTTON HANDLER
 # =====================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -138,14 +189,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users[uid] = device
         save_users(users)
 
+        state = load_state()
+        firmware = state[device]["firmware"]
+        gps = state[device]["gps"]
+
+        if not firmware or not gps:
+            f, g = get_versions(DEVICES[device], device)
+
+            if f:
+                firmware = f
+                state[device]["firmware"] = f
+            if g:
+                gps = g
+                state[device]["gps"] = g
+
+            save_state(state)
+
+        firmware = format_with_days(firmware)
+        gps = format_with_days(gps)
+
         await query.edit_message_text(
-            f"✅ Вы выбрали: {device}",
+            f"✅ Вы выбрали: {device}\n\n"
+            f"🆕 Firmware: {firmware}\n"
+            f"📡 GPS: {gps}",
             reply_markup=change_keyboard()
         )
 
 
 # =====================
-# CHECK LOOP
+# BACKGROUND CHECKER
 # =====================
 async def checker(app):
     while True:
@@ -155,7 +227,7 @@ async def checker(app):
         for device, url in DEVICES.items():
             firmware, gps = get_versions(url, device)
 
-            # firmware update
+            # Firmware update
             if firmware and firmware != state[device]["firmware"]:
                 for uid, dev in users.items():
                     if dev == device:
@@ -165,7 +237,7 @@ async def checker(app):
                         )
                 state[device]["firmware"] = firmware
 
-            # gps update
+            # GPS update
             if gps and gps != state[device]["gps"]:
                 for uid, dev in users.items():
                     if dev == device:
@@ -180,6 +252,22 @@ async def checker(app):
 
 
 # =====================
+# INIT DATA
+# =====================
+def init_versions():
+    state = load_state()
+
+    for device, url in DEVICES.items():
+        f, g = get_versions(url, device)
+        if f:
+            state[device]["firmware"] = f
+        if g:
+            state[device]["gps"] = g
+
+    save_state(state)
+
+
+# =====================
 # MAIN
 # =====================
 def main():
@@ -187,9 +275,11 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("change", change))
+    app.add_handler(CommandHandler("status", status))
     app.add_handler(CallbackQueryHandler(button))
 
-    # background task
+    init_versions()
+
     loop = asyncio.get_event_loop()
     loop.create_task(checker(app))
 
