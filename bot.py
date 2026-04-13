@@ -263,13 +263,13 @@ async def check_updates(context: ContextTypes.DEFAULT_TYPE):
         if fw and fw != state[device]["firmware"]:
             for uid, d in users.items():
                 if d == device:
-                    await context.bot.send_message(uid, f"🆕 {device} FW:\n{fw}")
+                    await context.bot.send_message(uid, f"🚗 Uniden {device}\n\n🆕 Firmware: {fw}\n📌 Обновление доступно")
             state[device]["firmware"] = fw
 
         if gps and gps != state[device]["gps"]:
             for uid, d in users.items():
                 if d == device:
-                    await context.bot.send_message(uid, f"📡 {device} GPS:\n{gps}")
+                    await context.bot.send_message(uid, f"🚗 Uniden {device}\n\n📡 GPS база обновлена\n📌 Рекомендуется обновить")
             state[device]["gps"] = gps
 
     save_state(state)
