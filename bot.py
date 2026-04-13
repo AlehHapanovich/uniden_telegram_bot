@@ -1,3 +1,5 @@
+from flask import Flask
+import threading
 import os
 import json
 import requests
@@ -33,6 +35,12 @@ DEVICES = {
 USERS_FILE = "users.json"
 STATE_FILE = "state.json"
 
+
+app_web = Flask(__name__)
+
+@app_web.route("/")
+def home():
+    return "Bot is running"
 
 # ================= STORAGE =================
 def load_users():
@@ -273,15 +281,20 @@ async def check_updates(context: ContextTypes.DEFAULT_TYPE):
             state[device]["gps"] = gps
 
     save_state(state)
+    
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
 
 
 # ================= MAIN =================
 def main():
+    threading.Thread(target=run_web).start()
+
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
-
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
