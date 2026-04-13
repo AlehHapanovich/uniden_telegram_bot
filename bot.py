@@ -14,9 +14,6 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# =====================
-# CONFIG
-# =====================
 TOKEN = os.getenv("BOT_TOKEN")
 
 DEVICES = {
@@ -29,9 +26,7 @@ USERS_FILE = "users.json"
 STATE_FILE = "state.json"
 
 
-# =====================
-# STORAGE
-# =====================
+# ================= STORAGE =================
 def load_users():
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
@@ -55,21 +50,22 @@ def save_state(data):
         json.dump(data, f)
 
 
-# =====================
-# HELPERS
-# =====================
-def days_ago(date_string):
-    try:
-        match = re.search(r"\d{4}/\d{2}/\d{2}", date_string)
-        if not match:
+# ================= HELPERS =================
+def extract_date(line):
+    match = re.search(r"\d{4}/\d{2}/\d{2}", line)
+    if match:
+        try:
+            return datetime.strptime(match.group(), "%Y/%m/%d")
+        except:
             return None
+    return None
 
-        date = datetime.strptime(match.group(), "%Y/%m/%d")
-        now = datetime.now()
 
-        return (now - date).days
-    except:
+def days_ago(date_string):
+    date = extract_date(date_string)
+    if not date:
         return None
+    return (datetime.now() - date).days
 
 
 def format_with_days(text):
@@ -82,27 +78,45 @@ def format_with_days(text):
     return text
 
 
-# =====================
-# PARSER
-# =====================
+# ================= PARSER =================
 def get_versions(url, device):
     try:
         r = requests.get(url, timeout=15)
         soup = BeautifulSoup(r.text, "html.parser")
         text = soup.get_text("\n")
 
-        firmware = None
-        gps = None
+        firmware_list = []
+        gps_list = []
 
         for line in text.split("\n"):
             line = line.strip()
 
-            if "Firmware" in line or "Version" in line:
-                if device in line or "R" in line:
-                    firmware = line
+            if not line:
+                continue
 
+            # firmware
+            if ("Firmware" in line or "Version" in line) and device in line:
+                firmware_list.append(line)
+
+            # gps
             if "Database" in line or "GPS" in line:
-                gps = line
+                gps_list.append(line)
+
+        # выбираем самую новую по дате
+        firmware = None
+        gps = None
+
+        if firmware_list:
+            firmware = max(
+                firmware_list,
+                key=lambda x: extract_date(x) or datetime.min
+            )
+
+        if gps_list:
+            gps = max(
+                gps_list,
+                key=lambda x: extract_date(x) or datetime.min
+            )
 
         return firmware, gps
 
@@ -111,9 +125,7 @@ def get_versions(url, device):
         return None, None
 
 
-# =====================
-# KEYBOARDS
-# =====================
+# ================= UI =================
 def device_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("R3", callback_data="set_R3")],
@@ -128,9 +140,7 @@ def change_keyboard():
     ])
 
 
-# =====================
-# COMMANDS
-# =====================
+# ================= COMMANDS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚗 Выбери свой радар:",
@@ -167,9 +177,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =====================
-# BUTTON HANDLER
-# =====================
+# ================= BUTTON =================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -195,14 +203,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not firmware or not gps:
             f, g = get_versions(DEVICES[device], device)
-
             if f:
                 firmware = f
                 state[device]["firmware"] = f
             if g:
                 gps = g
                 state[device]["gps"] = g
-
             save_state(state)
 
         firmware = format_with_days(firmware)
@@ -216,9 +222,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# =====================
-# BACKGROUND CHECKER
-# =====================
+# ================= CHECKER =================
 async def checker(app):
     while True:
         users = load_users()
@@ -227,7 +231,7 @@ async def checker(app):
         for device, url in DEVICES.items():
             firmware, gps = get_versions(url, device)
 
-            # Firmware update
+            # firmware update
             if firmware and firmware != state[device]["firmware"]:
                 for uid, dev in users.items():
                     if dev == device:
@@ -237,7 +241,7 @@ async def checker(app):
                         )
                 state[device]["firmware"] = firmware
 
-            # GPS update
+            # gps update
             if gps and gps != state[device]["gps"]:
                 for uid, dev in users.items():
                     if dev == device:
@@ -251,9 +255,7 @@ async def checker(app):
         await asyncio.sleep(3600)
 
 
-# =====================
-# INIT DATA
-# =====================
+# ================= INIT =================
 def init_versions():
     state = load_state()
 
@@ -267,9 +269,7 @@ def init_versions():
     save_state(state)
 
 
-# =====================
-# MAIN
-# =====================
+# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
