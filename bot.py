@@ -83,40 +83,37 @@ def get_versions(url, device):
     try:
         r = requests.get(url, timeout=15)
         soup = BeautifulSoup(r.text, "html.parser")
-        text = soup.get_text("\n")
 
-        firmware_list = []
-        gps_list = []
+        rows = soup.find_all("tr")
 
-        for line in text.split("\n"):
-            line = line.strip()
+        firmware_items = []
+        gps_items = []
 
-            if not line:
+        for row in rows:
+            cols = row.find_all("td")
+
+            if len(cols) < 3:
+                continue
+
+            name = cols[0].get_text(strip=True)
+            date_text = cols[-1].get_text(strip=True)
+
+            # пробуем распарсить дату
+            try:
+                date = datetime.strptime(date_text, "%m/%d/%Y")
+            except:
                 continue
 
             # firmware
-            if ("Firmware" in line or "Version" in line) and device in line:
-                firmware_list.append(line)
+            if device in name and ("Firmware" in name or "Version" in name):
+                firmware_items.append((date, name))
 
             # gps
-            if "Database" in line or "GPS" in line:
-                gps_list.append(line)
+            if "Database" in name or "GPS" in name:
+                gps_items.append((date, name))
 
-        # выбираем самую новую по дате
-        firmware = None
-        gps = None
-
-        if firmware_list:
-            firmware = max(
-                firmware_list,
-                key=lambda x: extract_date(x) or datetime.min
-            )
-
-        if gps_list:
-            gps = max(
-                gps_list,
-                key=lambda x: extract_date(x) or datetime.min
-            )
+        firmware = max(firmware_items, key=lambda x: x[0])[1] if firmware_items else None
+        gps = max(gps_items, key=lambda x: x[0])[1] if gps_items else None
 
         return firmware, gps
 
