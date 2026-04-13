@@ -1,9 +1,9 @@
 import os
 import json
-import time
-import requests
 import asyncio
+import requests
 from bs4 import BeautifulSoup
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,7 +12,10 @@ from telegram.ext import (
     ContextTypes,
 )
 
-TOKEN = os.getenv("BOT_TOKEN")  # или вставь строкой
+# =====================
+# CONFIG
+# =====================
+TOKEN = os.getenv("BOT_TOKEN")
 
 DEVICES = {
     "R3": "https://www.uniden.info/download/index.cfm?s=R3",
@@ -24,9 +27,9 @@ USERS_FILE = "users.json"
 STATE_FILE = "state.json"
 
 
-# =========================
+# =====================
 # STORAGE
-# =========================
+# =====================
 def load_users():
     if os.path.exists(USERS_FILE):
         with open(USERS_FILE, "r") as f:
@@ -50,9 +53,9 @@ def save_state(data):
         json.dump(data, f)
 
 
-# =========================
+# =====================
 # PARSER
-# =========================
+# =====================
 def get_versions(url, device):
     try:
         r = requests.get(url, timeout=15)
@@ -79,9 +82,9 @@ def get_versions(url, device):
         return None, None
 
 
-# =========================
+# =====================
 # KEYBOARDS
-# =========================
+# =====================
 def device_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("R3", callback_data="set_R3")],
@@ -96,9 +99,9 @@ def change_keyboard():
     ])
 
 
-# =========================
+# =====================
 # COMMANDS
-# =========================
+# =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚗 Выбери свой радар:",
@@ -113,9 +116,9 @@ async def change(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# =========================
-# BUTTONS
-# =========================
+# =====================
+# CALLBACKS
+# =====================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -136,14 +139,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_users(users)
 
         await query.edit_message_text(
-            f"✅ Ты выбрал: {device}",
+            f"✅ Вы выбрали: {device}",
             reply_markup=change_keyboard()
         )
 
 
-# =========================
-# NOTIFIER LOOP
-# =========================
+# =====================
+# CHECK LOOP
+# =====================
 async def checker(app):
     while True:
         users = load_users()
@@ -152,7 +155,7 @@ async def checker(app):
         for device, url in DEVICES.items():
             firmware, gps = get_versions(url, device)
 
-            # Firmware
+            # firmware update
             if firmware and firmware != state[device]["firmware"]:
                 for uid, dev in users.items():
                     if dev == device:
@@ -162,7 +165,7 @@ async def checker(app):
                         )
                 state[device]["firmware"] = firmware
 
-            # GPS
+            # gps update
             if gps and gps != state[device]["gps"]:
                 for uid, dev in users.items():
                     if dev == device:
@@ -173,24 +176,26 @@ async def checker(app):
                 state[device]["gps"] = gps
 
         save_state(state)
-        await asyncio.sleep(3600)  # раз в час
+        await asyncio.sleep(3600)
 
 
-# =========================
+# =====================
 # MAIN
-# =========================
-async def main():
+# =====================
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("change", change))
     app.add_handler(CallbackQueryHandler(button))
 
-    asyncio.create_task(checker(app))
+    # background task
+    loop = asyncio.get_event_loop()
+    loop.create_task(checker(app))
 
     print("Bot started...")
-    await app.run_polling()
+    app.run_polling()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
