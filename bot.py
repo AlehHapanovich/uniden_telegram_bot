@@ -61,29 +61,59 @@ def get_versions(url, device):
 
         rows = soup.find_all("tr")
 
-        firmware = []
-        gps = []
+        items = []
 
         for row in rows:
             cols = row.find_all("td")
-            if len(cols) < 3:
+            if len(cols) < 2:
                 continue
 
-            name = cols[0].get_text(strip=True)
+            version_text = cols[0].get_text(strip=True)
             date_text = cols[-1].get_text(strip=True)
 
-            date = parse_date(date_text)
-            if not date:
+            # парсим дату Release Date
+            try:
+                date = datetime.strptime(date_text, "%m/%d/%Y")
+            except:
                 continue
 
-            if device in name and ("Firmware" in name or "Version" in name):
-                firmware.append((date, name))
+            items.append({
+                "version": version_text,
+                "date": date
+            })
 
-            if "Database" in name or "GPS" in name:
-                gps.append((date, name))
+        if not items:
+            return None, None
 
-        firmware = max(firmware, key=lambda x: x[0])[1] if firmware else None
-        gps = max(gps, key=lambda x: x[0])[1] if gps else None
+        # 🔥 SORT BY RELEASE DATE (DESC)
+        items.sort(key=lambda x: x["date"], reverse=True)
+
+        firmware = None
+        gps = None
+
+        for item in items:
+            v = item["version"]
+            d = item["date"]
+
+            # -------------------------
+            # FIRMWARE
+            # -------------------------
+            if "Firmware" in v or "Version" in v:
+                match = re.search(r"\d+(\.\d+)+", v)
+                if match:
+                    firmware = f"Firmware {match.group()} ({d.strftime('%Y/%m/%d')})"
+                    break
+
+        for item in items:
+            v = item["version"]
+            d = item["date"]
+
+            # -------------------------
+            # GPS / DATABASE
+            # -------------------------
+            if "GPS" in v or "Database" in v:
+                gps = f"{v} ({d.strftime('%Y/%m/%d')})"
+                break
 
         return firmware, gps
 
