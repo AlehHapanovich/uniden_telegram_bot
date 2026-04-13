@@ -59,19 +59,53 @@ def get_versions(url, device):
         r = requests.get(url, timeout=15)
         soup = BeautifulSoup(r.text, "html.parser")
 
-        rows = soup.find_all("tr")
+        tables = soup.find_all("table")
+
+        target_table = None
+        version_idx = None
+        date_idx = None
+
+        # =========================
+        # 1. FIND RIGHT TABLE
+        # =========================
+        for table in tables:
+            headers = table.find_all("th")
+            header_texts = [h.get_text(strip=True).lower() for h in headers]
+
+            if not header_texts:
+                continue
+
+            # ищем нужные колонки
+            has_version = any("version" in h for h in header_texts)
+            has_date = any("release" in h or "date" in h for h in header_texts)
+
+            if has_version and has_date:
+                target_table = table
+
+                # определяем индексы колонок
+                for i, h in enumerate(header_texts):
+                    if "version" in h:
+                        version_idx = i
+                    if "release" in h or "date" in h:
+                        date_idx = i
+                break
+
+        if not target_table:
+            return None, None
+
+        rows = target_table.find_all("tr")
 
         items = []
 
-        for row in rows:
-            cols = row.find_all("td")
-            if len(cols) < 2:
+        for row in rows[1:]:  # skip header
+            cols = row.find_all(["td", "th"])
+
+            if len(cols) <= max(version_idx, date_idx):
                 continue
 
-            version_text = cols[0].get_text(strip=True)
-            date_text = cols[-1].get_text(strip=True)
+            version_text = cols[version_idx].get_text(strip=True)
+            date_text = cols[date_idx].get_text(strip=True)
 
-            # парсим дату Release Date
             try:
                 date = datetime.strptime(date_text, "%m/%d/%Y")
             except:
@@ -85,7 +119,9 @@ def get_versions(url, device):
         if not items:
             return None, None
 
-        # 🔥 SORT BY RELEASE DATE (DESC)
+        # =========================
+        # SORT BY RELEASE DATE
+        # =========================
         items.sort(key=lambda x: x["date"], reverse=True)
 
         firmware = None
@@ -95,10 +131,8 @@ def get_versions(url, device):
             v = item["version"]
             d = item["date"]
 
-            # -------------------------
-            # FIRMWARE
-            # -------------------------
-            if "Firmware" in v or "Version" in v:
+            # ---------------- FIRMWARE ----------------
+            if "firmware" in v.lower() or "version" in v.lower():
                 match = re.search(r"\d+(\.\d+)+", v)
                 if match:
                     firmware = f"Firmware {match.group()} ({d.strftime('%Y/%m/%d')})"
@@ -108,17 +142,15 @@ def get_versions(url, device):
             v = item["version"]
             d = item["date"]
 
-            # -------------------------
-            # GPS / DATABASE
-            # -------------------------
-            if "GPS" in v or "Database" in v:
+            # ---------------- GPS ----------------
+            if "gps" in v.lower() or "database" in v.lower():
                 gps = f"{v} ({d.strftime('%Y/%m/%d')})"
                 break
 
         return firmware, gps
 
     except Exception as e:
-        print("parse error:", e)
+        print("auto parser error:", e)
         return None, None
 
 
