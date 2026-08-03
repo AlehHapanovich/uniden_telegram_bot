@@ -1,7 +1,16 @@
 services:
-  - type: worker
+  # type: web, а не worker — background worker на Render платный ($7/мес),
+  # бесплатен только web-сервис. Flask-заглушка в bot.py существует именно
+  # ради этого: сервису нужен открытый HTTP-порт.
+  - type: web
     name: radar-bot
-    env: python
-    runtime: python-3.11.9
+    runtime: python
+    plan: free
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    healthCheckPath: /
+    envVars:
+      # Значение задаётся в дашборде Render, в репозиторий не попадает.
+      - key: BOT_TOKEN
+        sync: false

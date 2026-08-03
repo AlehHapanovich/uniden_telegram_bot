@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 import requests
 import re
 from datetime import datetime
@@ -11,6 +12,8 @@ from telegram import (
     InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
 )
+
+from flask import Flask
 
 from telegram.ext import (
     ApplicationBuilder,
@@ -30,12 +33,28 @@ DEVICES = {
     "R8": "https://www.uniden.info/download/index.cfm?s=R8",
 }
 
-# Каталог с данными: на Northflank сюда монтируется volume,
-# локально по умолчанию — папка проекта.
+# Каталог с данными. На Render free диска нет, поэтому файлы живут
+# только до ближайшего рестарта; переменная оставлена, чтобы при переезде
+# на хостинг с volume хватило одной env var.
 DATA_DIR = os.getenv("DATA_DIR", ".")
 
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
+
+
+# Render free усыпляет web-сервис без HTTP-трафика, что останавливает polling.
+# Заглушка отвечает на пинги uptime-монитора и держит сервис живым.
+app_web = Flask(__name__)
+
+
+@app_web.route("/")
+def home():
+    return "Bot is running"
+
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
 
 
 # ================= STORAGE =================
@@ -306,6 +325,8 @@ def main():
         raise SystemExit("BOT_TOKEN is not set")
 
     os.makedirs(DATA_DIR, exist_ok=True)
+
+    threading.Thread(target=run_web, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
