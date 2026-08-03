@@ -1,5 +1,3 @@
-from flask import Flask
-import threading
 import os
 import json
 import requests
@@ -32,15 +30,13 @@ DEVICES = {
     "R8": "https://www.uniden.info/download/index.cfm?s=R8",
 }
 
-USERS_FILE = "users.json"
-STATE_FILE = "state.json"
+# Каталог с данными: на Northflank сюда монтируется volume,
+# локально по умолчанию — папка проекта.
+DATA_DIR = os.getenv("DATA_DIR", ".")
 
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+STATE_FILE = os.path.join(DATA_DIR, "state.json")
 
-app_web = Flask(__name__)
-
-@app_web.route("/")
-def home():
-    return "Bot is running"
 
 # ================= STORAGE =================
 def load_users():
@@ -53,9 +49,13 @@ def save_users(data):
 
 
 def load_state():
+    state = {d: {"firmware": None, "gps": None} for d in DEVICES}
     if os.path.exists(STATE_FILE):
-        return json.load(open(STATE_FILE))
-    return {d: {"firmware": None, "gps": None} for d in DEVICES}
+        saved = json.load(open(STATE_FILE))
+        for d in state:
+            if d in saved:
+                state[d].update(saved[d])
+    return state
 
 
 def save_state(data):
@@ -279,28 +279,33 @@ async def check_updates(context: ContextTypes.DEFAULT_TYPE):
     for device, url in DEVICES.items():
         fw, gps = get_versions(url, device)
 
-        if fw and fw != state[device]["firmware"]:
-            for uid, d in users.items():
-                if d == device:
-                    await context.bot.send_message(uid, f"🚗 Uniden {device}\n\n🆕 Firmware: {fw}\n📌 Обновление доступно")
+        prev_fw = state[device]["firmware"]
+        if fw and fw != prev_fw:
+            # При первом заполнении состояния только запоминаем версию,
+            # иначе после потери state.json всем уйдёт рассылка о старых прошивках.
+            if prev_fw is not None:
+                for uid, d in users.items():
+                    if d == device:
+                        await context.bot.send_message(uid, f"🚗 Uniden {device}\n\n🆕 Firmware: {fw}\n📌 Обновление доступно")
             state[device]["firmware"] = fw
 
-        if gps and gps != state[device]["gps"]:
-            for uid, d in users.items():
-                if d == device:
-                    await context.bot.send_message(uid, f"🚗 Uniden {device}\n\n📡 GPS база обновлена\n📌 Рекомендуется обновить")
+        prev_gps = state[device]["gps"]
+        if gps and gps != prev_gps:
+            if prev_gps is not None:
+                for uid, d in users.items():
+                    if d == device:
+                        await context.bot.send_message(uid, f"🚗 Uniden {device}\n\n📡 GPS база обновлена\n📌 Рекомендуется обновить")
             state[device]["gps"] = gps
 
     save_state(state)
-    
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app_web.run(host="0.0.0.0", port=port)
 
 
 # ================= MAIN =================
 def main():
-    threading.Thread(target=run_web).start()
+    if not TOKEN:
+        raise SystemExit("BOT_TOKEN is not set")
+
+    os.makedirs(DATA_DIR, exist_ok=True)
 
     app = ApplicationBuilder().token(TOKEN).build()
 
